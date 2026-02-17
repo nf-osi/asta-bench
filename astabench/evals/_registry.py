@@ -29,6 +29,7 @@ from .inspect_eval_wrappers import (
     ds1000_validation,
 )
 from .labbench import litqa2, litqa2_inspect, litqa2_test, litqa2_validation
+from .nf_rag import nf_rag
 from .paper_finder import (
     paper_finder_litqa2_test,
     paper_finder_litqa2_validation,
@@ -75,4 +76,5 @@ __all__ = [
     "e2e_discovery_validation",
     "e2e_discovery_hard_test",
     "e2e_discovery_hard_validation",
+    "nf_rag",
 ]
