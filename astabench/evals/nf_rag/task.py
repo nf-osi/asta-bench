@@ -39,14 +39,16 @@ logger = logging.getLogger(__name__)
 
 GROUND_TRUTH_PATH = Path(__file__).resolve().parent / "eval_tools_ground.yaml"
 
-SYSTEM_MESSAGE = """\
+INSTRUCTION_PREFIX = """\
 You have access to a SPARQL interface for the NF-OSI knowledge graph.
-Use the provided tools to answer the question.
+Use the provided tools to answer the following question.
 
 Return your final answer as a JSON array of resource UUIDs, e.g.:
 ["uuid-1", "uuid-2", "uuid-3"]
 
-Return ONLY the JSON array as your final answer, with no other text around it."""
+Return ONLY the JSON array as your final answer, with no other text around it.
+
+Question: """
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,7 @@ def make_kg_mcp_toolsource() -> ToolSource:
         async with stdio_client(server_params) as (read, write):
             yield read, write
 
-    return MCPServerImpl(_connect)
+    return MCPServerImpl(_connect, name="nf-kg", events=True)
 
 
 async def _async_make_kg_mcp_tools() -> list[Tool]:
@@ -108,7 +110,7 @@ def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> list[Sample]:
         samples.append(
             Sample(
                 id=qid,
-                input=question,
+                input=INSTRUCTION_PREFIX + question,
                 target=json.dumps(results),
                 metadata={"category": qid.rsplit("-", 1)[0]},
             )
@@ -215,7 +217,7 @@ def nf_rag(
     tool_setups = [use_tools(make_kg_mcp_tools())]
 
     return Task(
-        dataset=MemoryDataset(samples, system_message=SYSTEM_MESSAGE),
+        dataset=MemoryDataset(samples),
         solver=not_implemented_solver(),
         scorer=score_nf_retrieval(),
         setup=tool_setups,
