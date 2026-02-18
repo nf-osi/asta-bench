@@ -77,12 +77,16 @@ export GOOGLE_API_KEY=<your-google-key>
 
 The framework uses litellm, so see https://models.litellm.ai/ for how to specify model.
 
-**Note:** Use `basic_agent` (not `react`) as the solver. The `react` agent does not pick up
-tools from the task setup; `basic_agent` does.
+**Note:** Use `basic_agent` (not `react`) as the solver. 
+The `react` agent does not pick up tools from the task setup; `basic_agent` does.
 
 ```bash
-# Run all questions
+# Run all questions (single pass)
 inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5
+
+# Run each question 3 times to measure variance
+inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
+  --epochs 3
 
 # Run only cell line questions
 inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
@@ -97,11 +101,22 @@ inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonn
   -T task_filter="AB-001,CL-007"
 ```
 
-Output is written to `logs/*` at the root repo.
+By default each question is run once. Use `--epochs N` to run each question N times
+(useful for measuring consistency across runs). Scores are averaged across epochs.
+
+The `basic_agent` solver has a default message limit of 50. Some questions may require
+more tool calls (e.g. schema discovery, query refinement). Increase with `-S message_limit=N`:
+
+```bash
+inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
+  -S message_limit=100
+```
+
+Output is written to `logs/*` at the root repo. Use `inspect view` to visualize logs.
 
 ## Files
 
 | File | Description |
 |------|-------------|
 | `task.py` | Task definition, tool definitions, data loading, and scorer |
-| `eval_tools_ground.yaml` | Ground truth: question text and expected UUID sets |
+| `eval_data.yaml` | Ground truth: questions and expected result sets |

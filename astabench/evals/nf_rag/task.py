@@ -27,23 +27,24 @@ from inspect_ai.scorer import (
     stderr,
 )
 from inspect_ai.solver import TaskState, use_tools
-from inspect_ai.tool import Tool, tool
+from inspect_ai.tool import Tool, ToolError, tool
 
 from astabench.evals.utils import not_implemented_solver
 
 logger = logging.getLogger(__name__)
 
-GROUND_TRUTH_PATH = Path(__file__).resolve().parent / "eval_tools_ground.yaml"
+GROUND_TRUTH_PATH = Path(__file__).resolve().parent / "eval_data.yaml"
 
 INSTRUCTION_PREFIX = """\
 You have access to a SPARQL interface for the NF-OSI knowledge graph.
 Use the provided tools to answer the following question.
 
-Return your final answer as a JSON array of resourceId values, e.g.:
-["uuid-1", "uuid-2", "uuid-3"]
+Return your final answer as a JSON array of results, e.g.:
+["uuid-1", "uuid-2", "uuid-3"] or [5] or ["name1", "name2"]
 
-Each resource in the graph has a resourceId property. Prefer using resourceId
-over type-specific IDs (e.g. cellLineId, animalModelId) whenever possible.
+Most questions ask for uuid retrieval. 
+For these, each resource in the graph has a resource ID that is the canonical uuid, linked via owl:sameAs. 
+Prefer using over type-specific IDs (e.g. cellLineId, animalModelId) whenever possible.
 
 Return ONLY the JSON array as your final answer, with no other text around it.
 
@@ -73,14 +74,19 @@ def sparql_query() -> Tool:
         Args:
             query: The SPARQL query to execute.
         """
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                SPARQL_ENDPOINT,
-                params={"query": query, "action": "tsv_export"},
-                timeout=30,
-            )
-            r.raise_for_status()
-            return r.text
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(
+                    SPARQL_ENDPOINT,
+                    params={"query": query, "action": "tsv_export"},
+                    timeout=30,
+                )
+                r.raise_for_status()
+                return r.text
+        except httpx.HTTPStatusError as e:
+            raise ToolError(f"SPARQL error {e.response.status_code}: {e.response.text}")
+        except httpx.RequestError as e:
+            raise ToolError(f"Request failed: {e}")
 
     return execute
 
@@ -162,7 +168,7 @@ SELECT ?type (COUNT(?s) AS ?count) WHERE {
 # ---------------------------------------------------------------------------
 
 def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> list[Sample]:
-    """Load eval_tools_ground.yaml and convert to inspect_ai Samples."""
+    """Load eval_data.yaml and convert to inspect_ai Samples."""
     import yaml
 
     with open(path) as f:
