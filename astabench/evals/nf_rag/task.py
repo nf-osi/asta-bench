@@ -1,9 +1,7 @@
-"""NF Knowledge Graph eval via KG MCP.
+"""NF Knowledge Graph RAG eval.
 
 The agent receives a natural-language question about NF research resources
-(cell lines, animal models, antibodies, mutations, etc.) and must query a
-SPARQL endpoint exposed through an MCP server to retrieve the correct set of
-resource UUIDs.
+and must query a SPARQL endpoint to retrieve the correct set of results.
 """
 
 import json
@@ -267,10 +265,10 @@ def nf_rag(
     task_filter: str | None = None,
     task_category: str | None = None,
 ):
-    """NF Knowledge Graph retrieval eval via KG MCP.
+    """NF Knowledge Graph RAG eval.
 
-    The agent queries an NF ontology knowledge graph through a KG MCP
-    server and returns resource UUIDs matching the question.
+    The agent queries an NF ontology knowledge graph via SPARQL
+    and returns results matching the question.
 
     Args:
         task_filter: Comma-separated list of question IDs to include
