@@ -38,7 +38,7 @@ Questions across 7 categories:
 
 ## Tools
 
-The agent is given three MCP tools from `kg_mcp.py`, launched as a stdio subprocess:
+The agent is given three tools that query the SPARQL endpoint directly:
 
 | Tool | Description |
 |------|-------------|
@@ -77,20 +77,23 @@ export GOOGLE_API_KEY=<your-google-key>
 
 The framework uses litellm, so see https://models.litellm.ai/ for how to specify model.
 
+**Note:** Use `basic_agent` (not `react`) as the solver. The `react` agent does not pick up
+tools from the task setup; `basic_agent` does.
+
 ```bash
 # Run all questions
-inspect eval astabench/nf_rag --solver react --model anthropic/claude-sonnet-4-5
+inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5
 
 # Run only cell line questions
-inspect eval astabench/nf_rag --solver react --model anthropic/claude-sonnet-4-5 \
+inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
   -T task_category=CL
 
 # Run only mutation and antibody questions
-inspect eval astabench/nf_rag --solver react --model anthropic/claude-sonnet-4-5 \
+inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
   -T task_category="MUT,AB"
 
 # Run specific questions by ID
-inspect eval astabench/nf_rag --solver react --model anthropic/claude-sonnet-4-5 \
+inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
   -T task_filter="AB-001,CL-007"
 ```
 
@@ -100,6 +103,5 @@ Output is written to `logs/*` at the root repo.
 
 | File | Description |
 |------|-------------|
-| `task.py` | Task definition, MCP wiring, data loading, and scorer |
-| `kg_mcp.py` | FastMCP server wrapping the SPARQL endpoint |
+| `task.py` | Task definition, tool definitions, data loading, and scorer |
 | `eval_tools_ground.yaml` | Ground truth: question text and expected UUID sets |

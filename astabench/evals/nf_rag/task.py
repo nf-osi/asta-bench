@@ -6,17 +6,16 @@ SPARQL endpoint exposed through an MCP server to retrieve the correct set of
 resource UUIDs.
 """
 
-import asyncio
-import concurrent.futures
 import json
 import logging
+import os
 import re
-import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.model import GenerateConfig
 from inspect_ai.scorer import (
     Metric,
     SampleScore,
@@ -28,10 +27,7 @@ from inspect_ai.scorer import (
     stderr,
 )
 from inspect_ai.solver import TaskState, use_tools
-from inspect_ai.tool import Tool, ToolSource
-from inspect_ai.tool._mcp._mcp import MCPServerImpl
-from mcp import StdioServerParameters
-from mcp.client.stdio import stdio_client
+from inspect_ai.tool import Tool, tool
 
 from astabench.evals.utils import not_implemented_solver
 
@@ -43,47 +39,122 @@ INSTRUCTION_PREFIX = """\
 You have access to a SPARQL interface for the NF-OSI knowledge graph.
 Use the provided tools to answer the following question.
 
-Return your final answer as a JSON array of resource UUIDs, e.g.:
+Return your final answer as a JSON array of resourceId values, e.g.:
 ["uuid-1", "uuid-2", "uuid-3"]
+
+Each resource in the graph has a resourceId property. Prefer using resourceId
+over type-specific IDs (e.g. cellLineId, animalModelId) whenever possible.
 
 Return ONLY the JSON array as your final answer, with no other text around it.
 
 Question: """
 
+SPARQL_ENDPOINT = os.environ.get("SPARQL_ENDPOINT", "http://localhost:7001")
+
 
 # ---------------------------------------------------------------------------
-# MCP tool source (stdio)
+# Tools
 # ---------------------------------------------------------------------------
 
-MCP_SERVER_SCRIPT = Path(__file__).resolve().parent / "kg_mcp.py"
+@tool
+def sparql_query() -> Tool:
+    """Execute a SPARQL query against the NF knowledge graph.
+
+    Returns results as tab-separated values (TSV).
+    The graph uses prefix nf: <http://nf-osi.github.com/terms#>.
+    """
+
+    async def execute(query: str) -> str:
+        """Execute a SPARQL query against the NF knowledge graph.
+
+        Returns results as tab-separated values (TSV).
+        The graph uses prefix nf: <http://nf-osi.github.com/terms#>.
+
+        Args:
+            query: The SPARQL query to execute.
+        """
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                SPARQL_ENDPOINT,
+                params={"query": query, "action": "tsv_export"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            return r.text
+
+    return execute
 
 
-def make_kg_mcp_toolsource() -> ToolSource:
-    """Create an MCP ToolSource that launches kg_mcp.py via stdio."""
+@tool
+def get_schema() -> Tool:
+    """Return all classes and properties defined in the NF ontology.
 
-    @asynccontextmanager
-    async def _connect():
-        server_params = StdioServerParameters(
-            command=sys.executable,
-            args=[str(MCP_SERVER_SCRIPT)],
-        )
-        async with stdio_client(server_params) as (read, write):
-            yield read, write
+    Use this to discover the graph structure before writing queries.
+    """
 
-    return MCPServerImpl(_connect, name="nf-kg", events=True)
+    async def execute() -> str:
+        """Return all classes and properties defined in the NF ontology.
+
+        Use this to discover the graph structure before writing queries.
+        """
+        q = """\
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {
+  {
+    ?term a owl:Class .
+    BIND("Class" AS ?kind)
+  } UNION {
+    ?term a owl:ObjectProperty .
+    BIND("ObjectProperty" AS ?kind)
+  } UNION {
+    ?term a owl:DatatypeProperty .
+    BIND("DatatypeProperty" AS ?kind)
+  }
+  OPTIONAL { ?term rdfs:label ?label }
+  OPTIONAL { ?term rdfs:comment ?comment }
+  OPTIONAL { ?term rdfs:domain ?domain }
+  OPTIONAL { ?term rdfs:range ?range }
+} ORDER BY ?kind ?term"""
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                SPARQL_ENDPOINT,
+                params={"query": q, "action": "tsv_export"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            return r.text
+
+    return execute
 
 
-async def _async_make_kg_mcp_tools() -> list[Tool]:
-    """Get the list of Tools from the KG MCP server (async)."""
-    source = make_kg_mcp_toolsource()
-    return list(await source.tools())
+@tool
+def count_by_type() -> Tool:
+    """Return instance counts grouped by rdf:type.
 
+    Quick overview of what data is in the graph.
+    """
 
-def make_kg_mcp_tools() -> list[Tool]:
-    """Get the list of Tools from the KG MCP server (sync wrapper)."""
-    coro = _async_make_kg_mcp_tools()
-    fut = concurrent.futures.ThreadPoolExecutor().submit(asyncio.run, coro)
-    return fut.result()
+    async def execute() -> str:
+        """Return instance counts grouped by rdf:type.
+
+        Quick overview of what data is in the graph.
+        """
+        q = """\
+SELECT ?type (COUNT(?s) AS ?count) WHERE {
+  ?s a ?type
+} GROUP BY ?type ORDER BY DESC(?count)"""
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                SPARQL_ENDPOINT,
+                params={"query": q, "action": "tsv_export"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            return r.text
+
+    return execute
 
 
 # ---------------------------------------------------------------------------
@@ -214,11 +285,12 @@ def nf_rag(
     if not samples:
         raise ValueError("No samples matched the filter criteria")
 
-    tool_setups = [use_tools(make_kg_mcp_tools())]
+    tool_setups = [use_tools(sparql_query(), get_schema(), count_by_type())]
 
     return Task(
         dataset=MemoryDataset(samples),
         solver=not_implemented_solver(),
         scorer=score_nf_retrieval(),
         setup=tool_setups,
+        config=GenerateConfig(max_tool_output=128 * 1024),
     )
