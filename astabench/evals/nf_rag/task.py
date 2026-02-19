@@ -40,9 +40,9 @@ Use the provided tools to answer the following question.
 Return your final answer as a JSON array of results, e.g.:
 ["uuid-1", "uuid-2", "uuid-3"] or [5] or ["name1", "name2"]
 
-Most questions ask for uuid retrieval. 
-For these, each resource in the graph has a resource ID that is the canonical uuid, linked via owl:sameAs. 
-Prefer using over type-specific IDs (e.g. cellLineId, animalModelId) whenever possible.
+Most questions ask for uuid retrieval.
+For these, each resource in the graph has nf:resourceId as a string property containing the canonical uuid.
+Prefer using nf:resourceId over type-specific IDs (e.g. cellLineId, animalModelId) whenever possible.
 
 Return ONLY the JSON array as your final answer, with no other text around it.
 

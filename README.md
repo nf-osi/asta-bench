@@ -140,11 +140,13 @@ Prior to scoring or submitting:
    mv your_submission_log.eval logs/your-solver-name/
    ```
 
-2. Generate the required configuration file:
+2. Generate the required configuration file (optional):
    ```bash
    astabench eval --config-only --log-dir logs/your-solver-name/ --config-path astabench/config/v1.0.0.yml --split validation --ignore-git
    ```
-   This creates an `eval_config.json` file needed for scoring and submission.
+   This creates an `eval_config.json` file needed for scoring and submission. The
+   `astabench score` command will also generate this file automatically if it is
+   missing, so this step is only required if you prefer to populate it yourself.
 
 ### Viewing results
 
@@ -152,7 +154,13 @@ View results with `inspect view --host 0.0.0.0` (which launches a server at `htt
 
 ### Scoring Results
 
-Run `astabench score <log_dir>` to compile aggregate scores and calculate model usage costs. The `log_dir` can be:
+- Run `astabench score <log_dir>` to compile aggregate scores and calculate model usage costs. The command accepts a single run directory or a parent `logs/` directory and will:
+  - extract `.tar.gz`, `.zip`, and `.eval` archives that haven't been unpacked yet;
+  - copy `.eval` files into their matching directories so Inspect can read them;
+  - generate `eval_config.json` automatically when it is missing (override the
+    assumed split with `--split test` if needed);
+  - score every prepared run directory under `<log_dir>` sequentially.
+  Model usage costs are computed solely from `astabench/config/litellm_cost_overrides.json`, so extend that file with the entries you need. No environment variables are required for offline scoring. The `log_dir` can be:
 - For full suite runs: the log directory reported at the end of `astabench eval`
 - For single tasks: the directory containing your `.eval` files and `eval_config.json`
 
@@ -370,4 +378,3 @@ We generally follow the InspectAI terminology, but use some terms interchangeabl
 - A "scorer" is a function that takes a task state (after the solver has finished) and a target and returns one or more metrics.
 - A "task" or "benchmark" consists of a dataset (one or more problems) + a scorer
 - A "solver" or "agent" is a function that takes a task state (containing the problem input, possibly metadata/tools), potentially calls tools, and alters the state to indicate its answer (i.e. via `state.output.completion`).  Note: in these docs we generally use "solver" and "agent" interchangeably, despite them having slightly different meanings in InspectAI.
-
