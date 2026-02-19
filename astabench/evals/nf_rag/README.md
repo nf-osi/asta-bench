@@ -114,6 +114,27 @@ inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonn
 
 Output is written to `logs/*` at the root repo. Use `inspect view` to visualize logs.
 
+## Cost accounting
+
+Run `astabench score <log_dir>` (point it at either the directory printed at the end of
+`inspect eval` or the top-level `logs/` folder) to aggregate recall metrics and compute
+model-usage costs for an NF_RAG run. The command automatically extracts `.eval` archives,
+creates `eval_config.json` if it is missing, and uses the override table in
+`astabench/config/litellm_cost_overrides.json` as the sole source of pricing data. The scorer
+relies on InspectAI's usage logging, so calls that go through Inspect models or `AsyncOpenAI`
+with the Inspect bridge are handled automatically. If a custom solver makes model calls outside
+of Inspect's wrappers, record them manually so the scorer can report the correct spend:
+
+```python
+from astabench.util.model import record_model_usage_with_inspect
+from inspect_ai.model import ModelUsage
+
+record_model_usage_with_inspect(
+    "openai/gpt-4.1",
+    ModelUsage(input_tokens=100, output_tokens=10, total_tokens=110),
+)
+```
+
 ## Files
 
 | File | Description |

@@ -102,7 +102,16 @@ disable = [
 ]
 
 [tool.setuptools.package-data]
-"astabench" = ["config/*.yml", "evals/inspect_eval_wrappers/ds1000_splits.json", "util/sandbox/sandbox_compose.yaml", "util/sandbox/Dockerfile", "util/sandbox/*.txt", "evals/demo/code_execution/*.yaml", "evals/demo/arithmetic/data.json"]
+"astabench" = [
+    "config/*.yml",
+    "config/*.json",
+    "evals/inspect_eval_wrappers/ds1000_splits.json",
+    "util/sandbox/sandbox_compose.yaml",
+    "util/sandbox/Dockerfile",
+    "util/sandbox/*.txt",
+    "evals/demo/code_execution/*.yaml",
+    "evals/demo/arithmetic/data.json",
+]
 "inspect_evals.core_bench" = [
     "*.json",
     "*.yaml",
