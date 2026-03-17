@@ -241,8 +241,11 @@ def load_ground_truth(
         question = entry[field]
         choices = entry["choices"]
         correct_idx = entry["correct_choice_index"]
-        pmcid = entry["pmcid"]
+        pmid = entry.get("pmid", "")
         passage_indices = entry["passage_indices"]
+
+        if not pmid:
+            logger.warning("No pmid for %s, attribution scoring will fail", qid)
 
         # Build multiple-choice prompt
         choices_text = "\n".join(f"{chr(65 + i)}. {c}" for i, c in enumerate(choices))
@@ -252,7 +255,7 @@ def load_ground_truth(
         target = {
             "correct_choice_index": correct_idx,
             "attribution": [
-                {"pmid": pmcid.replace("PMC", ""), "passage": idx}
+                {"pmid": pmid, "passage": idx}
                 for idx in passage_indices
             ],
         }
@@ -337,7 +340,7 @@ def accuracy() -> Metric:
     """Accuracy: fraction of questions with correct answer choice."""
 
     def metric_fn(scores: list[SampleScore]) -> float:
-        correct = sum(1 for s in scores if s.metadata.get("answer_correct", False))
+        correct = sum(1 for s in scores if (s.score.metadata or {}).get("answer_correct", False))
         return correct / max(1, len(scores))
 
     return metric_fn
@@ -348,7 +351,7 @@ def passage_f1() -> Metric:
     """Mean F1 over passage attribution tuples."""
 
     def metric_fn(scores: list[SampleScore]) -> float:
-        total = sum(s.metadata.get("f1", 0.0) for s in scores)
+        total = sum((s.score.metadata or {}).get("f1", 0.0) for s in scores)
         return total / max(1, len(scores))
 
     return metric_fn
