@@ -1,0 +1,26 @@
+# Single-item test dataset for debugging nf_rag_pubs
+#
+# Usage: inspect eval astabench/nf_rag_pubs -T task_filter=PMC9221468-01
+
+ground_truth:
+  PMC9221468-01:
+    question: What is the only currently FDA-approved pharmacotherapy for symptomatic
+      and inoperable plexiform neurofibromas in pediatric NF1 patients?
+    pmcid: PMC9221468
+    pmid: '35741605'
+    passage_indices:
+    - 1
+    - 3
+    ideal: Selumetinib (Koselugo) is the only FDA-approved pharmacotherapy for symptomatic,
+      inoperable plexiform neurofibromas in pediatric NF1 patients aged 2 years and
+      older.
+    choices:
+    - Everolimus
+    - Selumetinib
+    - Imatinib
+    - Not in knowledgebase
+    correct_choice_index: 1
+    difficulty: medium
+    question_type: factual
+    user_query: what's the only approved drug for plexiform neurofibromas in kids
+    author: gemini-3.1-pro-preview
