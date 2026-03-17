@@ -7,7 +7,7 @@ The agent receives a multiple-choice question about NF research and must:
 
 Scored on two separate metrics:
 - accuracy: correct multiple-choice answer
-- passage_f1: F1 over (pmid, passage_num) attribution tuples
+- citation_f1: F1 over (pmid, passage_num) attribution tuples
 """
 
 import json
@@ -347,7 +347,7 @@ def accuracy() -> Metric:
 
 
 @metric
-def passage_f1() -> Metric:
+def citation_f1() -> Metric:
     """Mean F1 over passage attribution tuples."""
 
     def metric_fn(scores: list[SampleScore]) -> float:
@@ -357,7 +357,7 @@ def passage_f1() -> Metric:
     return metric_fn
 
 
-@scorer(metrics=[accuracy(), passage_f1(), stderr()])
+@scorer(metrics=[accuracy(), citation_f1(), stderr()])
 def score_answer() -> Scorer:
     """Score correct answer choice."""
 
@@ -378,7 +378,7 @@ def score_answer() -> Scorer:
     return score
 
 
-@scorer(metrics=[accuracy(), passage_f1(), stderr()])
+@scorer(metrics=[accuracy(), citation_f1(), stderr()])
 def score_attribution() -> Scorer:
     """Score passage attribution by F1."""
 
@@ -426,7 +426,7 @@ def nf_rag_pubs(
 
     Scored on two separate metrics:
     - accuracy: correct multiple-choice answer
-    - passage_f1: F1 over (pmid, passage) attribution tuples
+    - citation_f1: F1 over (pmid, passage) attribution tuples
 
     Example rendered question::
 

@@ -84,7 +84,7 @@ it falls back to:
 The task reports two metrics:
 
 - `accuracy`: whether the selected multiple-choice answer matches the ground truth
-- `passage_f1`: F1 over the set of `(pmid, passage)` attribution tuples
+- `citation_f1`: F1 over the set of `(pmid, passage)` attribution tuples
 
 Attribution scoring is set-based:
 
