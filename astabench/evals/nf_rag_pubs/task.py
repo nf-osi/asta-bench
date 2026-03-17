@@ -217,16 +217,28 @@ ORDER BY DESC(?count)"""
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> list[Sample]:
-    """Load eval_data.yaml and convert to inspect_ai Samples."""
+def load_ground_truth(
+    path: Path = GROUND_TRUTH_PATH,
+    question_style: str = "precise",
+) -> list[Sample]:
+    """Load eval_data.yaml and convert to inspect_ai Samples.
+
+    Args:
+        path: Path to eval_data.yaml.
+        question_style: Which question field to use.
+            "precise" uses the carefully worded ``question`` field.
+            "user_query" uses the colloquial ``user_query`` field.
+    """
     import yaml
 
     with open(path) as f:
         data = yaml.safe_load(f)
 
+    field = "user_query" if question_style == "user_query" else "question"
+
     samples = []
     for qid, entry in data["ground_truth"].items():
-        question = entry["question"]
+        question = entry[field]
         choices = entry["choices"]
         correct_idx = entry["correct_choice_index"]
         pmcid = entry["pmcid"]
@@ -402,6 +414,7 @@ def score_attribution() -> Scorer:
 def nf_rag_pubs(
     task_filter: str | None = None,
     task_category: str | None = None,
+    question_style: str = "precise",
 ):
     """NF Knowledge Graph Publication RAG eval.
 
@@ -441,8 +454,10 @@ def nf_rag_pubs(
                      (e.g. "PMC9221468-01,PMC9221468-02").
         task_category: Comma-separated list of category prefixes to include
                        (e.g. "PMC9221468,PMC3484870").
+        question_style: "precise" (default) uses carefully worded questions;
+                        "user_query" uses colloquial, realistic phrasings.
     """
-    samples = load_ground_truth()
+    samples = load_ground_truth(question_style=question_style)
 
     if task_filter:
         ids = {t.strip() for t in task_filter.split(",")}
