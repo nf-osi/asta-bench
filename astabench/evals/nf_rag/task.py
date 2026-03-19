@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 GROUND_TRUTH_PATH = Path(__file__).resolve().parent / "eval_data.yaml"
 
 INSTRUCTION_PREFIX = """\
-You have access to a SPARQL interface for the NF-OSI knowledge graph.
+You have access to a SPARQL interface for the NF-OSI knowledge graph of data resources and research tools. 
 Use the provided tools to answer the following question.
 
 Return your final answer as a JSON array of results, e.g.:
@@ -43,6 +43,26 @@ Return your final answer as a JSON array of results, e.g.:
 Most questions ask for uuid retrieval.
 For these, each resource in the graph has nf:resourceId as a string property containing the canonical uuid.
 Prefer using nf:resourceId over type-specific IDs (e.g. cellLineId, animalModelId) whenever possible.
+
+Useful schema sketch of the most important/common classes and properties (use get_schema tool if full ontology is needed):
+
+Study
+  -> File
+      -> hasModelSystem -> Tool
+      -> hasNF1Genotype / hasNF2Genotype -> Genotype
+      -> dataType -> Data
+
+Tool
+  -> hasMutation -> Mutation
+  -> fromDonor -> Donor
+  <- aboutResource - Observation - referencesPublication -> Publication
+  <- hasResource - Biobank
+
+Tool
+  <- resource/development context -> Development
+      -> hasPublication -> Publication
+      -> hasInvestigator -> Investigator
+      -> hasFunder -> Funder
 
 Return ONLY the JSON array as your final answer, with no other text around it.
 
@@ -93,7 +113,7 @@ def sparql_query() -> Tool:
 def get_schema() -> Tool:
     """Return all classes and properties defined in the NF ontology.
 
-    Use this to discover the graph structure before writing queries.
+    Reviewing graph structure can be helpful before writing queries.
     """
 
     async def execute() -> str:
