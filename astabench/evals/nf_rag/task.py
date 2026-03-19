@@ -165,12 +165,19 @@ SELECT ?type (COUNT(?s) AS ?count) WHERE {
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> list[Sample]:
-    """Load eval_data.yaml and convert to inspect_ai Samples."""
+def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> tuple[list[Sample], str]:
+    """Load eval_data.yaml and convert to inspect_ai Samples.
+
+    Returns:
+        tuple: (samples, dataset_version)
+    """
     import yaml
 
     with open(path) as f:
         data = yaml.safe_load(f)
+
+    # Extract dataset version from metadata
+    dataset_version = data.get("metadata", {}).get("version", "draft")
 
     samples = []
     for qid, entry in data["ground_truth"].items():
@@ -191,7 +198,7 @@ def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> list[Sample]:
             )
         )
 
-    return samples
+    return samples, dataset_version
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +283,7 @@ def nf_rag(
         task_category: Comma-separated list of category prefixes to include
                        (e.g. "CL,MUT").
     """
-    samples = load_ground_truth()
+    samples, dataset_version = load_ground_truth()
 
     if task_filter:
         ids = {t.strip() for t in task_filter.split(",")}
@@ -297,4 +304,5 @@ def nf_rag(
         scorer=score_nf_retrieval(),
         setup=tool_setups,
         config=GenerateConfig(max_tool_output=128 * 1024),
+        version=dataset_version,
     )

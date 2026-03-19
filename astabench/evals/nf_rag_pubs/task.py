@@ -1,13 +1,16 @@
 """NF Knowledge Graph Publication RAG eval.
 
-The agent receives a multiple-choice question about NF research and must:
+The agent receives a question about NF research and must:
 1. Query the SPARQL+Text endpoint to retrieve relevant publication passages
-2. Select the correct answer choice
+2. Answer in the configured format
 3. Cite the supporting passages with attribution (PMID, passage number)
 
-Scored on two separate metrics:
+For the default multiple-choice format, the task reports:
 - accuracy: correct multiple-choice answer
 - citation_f1: F1 over (pmid, passage_num) attribution tuples
+
+For short-answer format, the task reports only citation_f1 online. Semantic
+answer scoring is intended for postprocessing from logged outputs.
 """
 
 import json
@@ -15,6 +18,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from inspect_ai import Task, task
@@ -42,11 +46,11 @@ GROUND_TRUTH_PATH = Path(__file__).resolve().parent / "eval_data.yaml"
 INSTRUCTION_PREFIX = """\
 You have access to a SPARQL+Text interface for the NF-OSI knowledge graph \
 with indexed publication text from NF research papers. Use the provided tools \
-to search for relevant passages, then answer the multiple-choice question and \
-cite the passages that support your answer.
+to search for relevant passages, then answer the question and cite the \
+passages that support your answer.
 
 IMPORTANT: No clarification will be provided. Interpret the question as best \
-you can and select the most appropriate answer choice.
+you can and provide the most appropriate answer.
 
 ## SPARQL+Text query examples
 
@@ -68,11 +72,34 @@ SELECT ?text WHERE {
   ?text ql:contains-word "*"
 } LIMIT 10
 
+"""
+
+MCQ_RESPONSE_FORMAT = """\
 ## Response format
 
 Return your final answer as a JSON object with TWO fields:
 {
   "answer": "<choice letter>",
+  "attribution": [
+    {"pmid": "<pmid>", "passage": <number>},
+    ...
+  ]
+}
+
+Each passage in the text index includes an attribution tag in the format: \
+[PMID{pmid}-{passage_num}-{section_type}]. Extract the pmid and passage \
+number from retrieved text to populate the attribution array.
+
+Return ONLY the JSON object as your final answer, with no other text around it.
+
+Question: """
+
+SHORT_ANSWER_RESPONSE_FORMAT = """\
+## Response format
+
+Return your final answer as a JSON object with TWO fields:
+{
+  "answer": "<short answer text>",
   "attribution": [
     {"pmid": "<pmid>", "passage": <number>},
     ...
@@ -220,7 +247,8 @@ ORDER BY DESC(?count)"""
 def load_ground_truth(
     path: Path = GROUND_TRUTH_PATH,
     question_style: str = "precise",
-) -> list[Sample]:
+    answer_format: Literal["mcq", "short_answer"] = "mcq",
+) -> tuple[list[Sample], str]:
     """Load eval_data.yaml and convert to inspect_ai Samples.
 
     Args:
@@ -228,11 +256,21 @@ def load_ground_truth(
         question_style: Which question field to use.
             "precise" uses the carefully worded ``question`` field.
             "user_query" uses the colloquial ``user_query`` field.
+        answer_format: Output mode for the task prompt and target.
+            "mcq" uses multiple-choice prompts and online answer scoring.
+            "short_answer" uses free-text answer prompts and leaves answer
+            scoring for postprocessing.
+
+    Returns:
+        tuple: (samples, dataset_version)
     """
     import yaml
 
     with open(path) as f:
         data = yaml.safe_load(f)
+
+    # Extract dataset version from metadata
+    dataset_version = data.get("metadata", {}).get("version", "draft")
 
     field = "user_query" if question_style == "user_query" else "question"
 
@@ -241,39 +279,52 @@ def load_ground_truth(
         question = entry[field]
         choices = entry["choices"]
         correct_idx = entry["correct_choice_index"]
+        ideal = entry["ideal"]
         pmid = entry.get("pmid", "")
         passage_indices = entry["passage_indices"]
 
         if not pmid:
             logger.warning("No pmid for %s, attribution scoring will fail", qid)
 
-        # Build multiple-choice prompt
-        choices_text = "\n".join(f"{chr(65 + i)}. {c}" for i, c in enumerate(choices))
-        full_question = f"{question}\n\n{choices_text}"
-
-        # Target encodes both correct choice and expected passages
-        target = {
-            "correct_choice_index": correct_idx,
-            "attribution": [
-                {"pmid": pmid, "passage": idx}
-                for idx in passage_indices
-            ],
-        }
+        if answer_format == "mcq":
+            choices_text = "\n".join(f"{chr(65 + i)}. {c}" for i, c in enumerate(choices))
+            prompt = INSTRUCTION_PREFIX + MCQ_RESPONSE_FORMAT
+            full_question = f"{question}\n\n{choices_text}"
+            target = {
+                "answer_format": "mcq",
+                "correct_choice_index": correct_idx,
+                "attribution": [
+                    {"pmid": pmid, "passage": idx}
+                    for idx in passage_indices
+                ],
+            }
+        else:
+            prompt = INSTRUCTION_PREFIX + SHORT_ANSWER_RESPONSE_FORMAT
+            full_question = question
+            target = {
+                "answer_format": "short_answer",
+                "ideal_answer": ideal,
+                "attribution": [
+                    {"pmid": pmid, "passage": idx}
+                    for idx in passage_indices
+                ],
+            }
 
         samples.append(
             Sample(
                 id=qid,
-                input=INSTRUCTION_PREFIX + full_question,
+                input=prompt + full_question,
                 target=json.dumps(target),
                 metadata={
                     "category": qid.rsplit("-", 1)[0],
                     "difficulty": entry.get("difficulty", "unknown"),
                     "question_type": entry.get("question_type", "unknown"),
+                    "answer_format": answer_format,
                 },
             )
         )
 
-    return samples
+    return samples, dataset_version
 
 
 # ---------------------------------------------------------------------------
@@ -283,12 +334,13 @@ def load_ground_truth(
 ATTRIBUTION_RE = re.compile(r"\[PMID(\d+)-(\d+)-\w+\]")
 
 
-def _extract_response(text: str) -> tuple[int | None, list[dict]]:
-    """Extract answer choice index and passage list from agent output.
+def _extract_response(text: str) -> tuple[int | None, str | None, list[dict]]:
+    """Extract answer choice index, answer text, and passage list from agent output.
 
-    Returns (choice_index_or_None, [{pmid, passage}, ...]).
+    Returns (choice_index_or_None, answer_text_or_None, [{pmid, passage}, ...]).
     """
     choice_idx = None
+    answer_text = None
     passages: list[dict] = []
 
     # Try parsing as JSON object with "answer" and "attribution" keys
@@ -300,6 +352,7 @@ def _extract_response(text: str) -> tuple[int | None, list[dict]]:
             if isinstance(parsed, dict):
                 # Extract choice
                 answer = str(parsed.get("answer", "")).strip()
+                answer_text = answer or None
                 if len(answer) == 1 and answer.upper() in "ABCDEFGH":
                     choice_idx = ord(answer.upper()) - 65
                 elif answer.isdigit():
@@ -314,8 +367,8 @@ def _extract_response(text: str) -> tuple[int | None, list[dict]]:
                                 "pmid": str(p["pmid"]).strip(),
                                 "passage": int(p["passage"]),
                             })
-                    if choice_idx is not None or passages:
-                        return choice_idx, passages
+                    if choice_idx is not None or answer_text is not None or passages:
+                        return choice_idx, answer_text, passages
     except (json.JSONDecodeError, ValueError):
         pass
 
@@ -328,7 +381,7 @@ def _extract_response(text: str) -> tuple[int | None, list[dict]]:
     for m in ATTRIBUTION_RE.finditer(text):
         passages.append({"pmid": m.group(1), "passage": int(m.group(2))})
 
-    return choice_idx, passages
+    return choice_idx, answer_text, passages
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +410,7 @@ def citation_f1() -> Metric:
     return metric_fn
 
 
-@scorer(metrics=[accuracy(), citation_f1(), stderr()])
+@scorer(metrics=[accuracy(), stderr()])
 def score_answer() -> Scorer:
     """Score correct answer choice."""
 
@@ -365,7 +418,7 @@ def score_answer() -> Scorer:
         expected = json.loads(target.text)
         expected_idx = expected["correct_choice_index"]
 
-        choice_idx, _ = _extract_response(state.output.completion)
+        choice_idx, _, _ = _extract_response(state.output.completion)
         correct = choice_idx == expected_idx
 
         return Score(
@@ -378,7 +431,7 @@ def score_answer() -> Scorer:
     return score
 
 
-@scorer(metrics=[accuracy(), citation_f1(), stderr()])
+@scorer(metrics=[citation_f1(), stderr()])
 def score_attribution() -> Scorer:
     """Score passage attribution by F1."""
 
@@ -386,7 +439,7 @@ def score_attribution() -> Scorer:
         expected = json.loads(target.text)
         expected_passages = expected["attribution"]
 
-        _, predicted_passages = _extract_response(state.output.completion)
+        _, _, predicted_passages = _extract_response(state.output.completion)
 
         def to_key(p: dict) -> tuple:
             return (str(p.get("pmid", "")).strip(), int(p.get("passage", 0)))
@@ -418,15 +471,19 @@ def nf_rag_pubs(
     task_filter: str | None = None,
     task_category: str | None = None,
     question_style: str = "precise",
+    answer_format: Literal["mcq", "short_answer"] = "mcq",
 ):
     """NF Knowledge Graph Publication RAG eval.
 
     The agent queries an NF knowledge graph with SPARQL+Text,
-    selects the correct answer, and cites supporting passages.
+    answers the question in the configured format, and cites supporting passages.
 
-    Scored on two separate metrics:
+    For multiple-choice format, scored on two metrics:
     - accuracy: correct multiple-choice answer
     - citation_f1: F1 over (pmid, passage) attribution tuples
+
+    For short-answer format, only citation_f1 is scored online. Semantic answer
+    scoring is expected to happen in postprocessing from logged outputs.
 
     Example rendered question::
 
@@ -459,8 +516,14 @@ def nf_rag_pubs(
                        (e.g. "PMC9221468,PMC3484870").
         question_style: "precise" (default) uses carefully worded questions;
                         "user_query" uses colloquial, realistic phrasings.
+        answer_format: "mcq" (default) uses multiple-choice prompts and online
+                       answer scoring; "short_answer" uses free-text answers and
+                       only scores citations online.
     """
-    samples = load_ground_truth(question_style=question_style)
+    samples, dataset_version = load_ground_truth(
+        question_style=question_style,
+        answer_format=answer_format,
+    )
 
     if task_filter:
         ids = {t.strip() for t in task_filter.split(",")}
@@ -475,10 +538,15 @@ def nf_rag_pubs(
 
     tool_setups = [use_tools(sparql_text_query(), get_schema(), get_entity_types())]
 
+    scorers: list[Scorer] = [score_attribution()]
+    if answer_format == "mcq":
+        scorers.insert(0, score_answer())
+
     return Task(
         dataset=MemoryDataset(samples),
         solver=not_implemented_solver(),
-        scorer=[score_answer(), score_attribution()],
+        scorer=scorers,
         setup=tool_setups,
         config=GenerateConfig(max_tool_output=128 * 1024),
+        version=dataset_version,
     )
