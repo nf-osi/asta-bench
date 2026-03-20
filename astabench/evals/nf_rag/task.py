@@ -61,7 +61,7 @@ For comparison questions, include all entities that tie for the best value unles
 Prefer explicit attributes first and add searching text description if this makes sense and remaining resources permit.
 Balance search depth and breadth with responsiveness to meet UX and resource requirements; submit an answer before the 45 tool use quotas are reached.
 
-Useful schema sketch of the most important/common classes and properties (use get_schema tool for full ontology):
+Useful schema sketch of the most important/common classes and properties (use get_schema for ontology or get_shape for one class's SHACL shape):
 
 Study
   -> File
@@ -165,6 +165,63 @@ SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {
             )
             r.raise_for_status()
             return r.text
+
+    return execute
+
+
+@tool
+def get_shape() -> Tool:
+    """Return the SHACL shape for one class.
+
+    Use this to inspect the expected properties for a class such as CellLine,
+    AnimalModel, Donor, File, or Observation.
+    """
+
+    async def execute(class_name: str) -> str:
+        """Return the SHACL shape for one class.
+
+        Args:
+            class_name: Local class name such as "CellLine" or "AnimalModel".
+        """
+        class_name = class_name.strip()
+        if ":" in class_name:
+            class_name = class_name.split(":", 1)[1]
+
+        q = f"""\
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+SELECT ?shape ?label ?comment ?path ?datatype ?nodeKind ?class ?minCount ?maxCount
+WHERE {{
+  ?shape a sh:NodeShape ;
+         sh:targetClass nf:{class_name} .
+  OPTIONAL {{ ?shape rdfs:label ?label }}
+  OPTIONAL {{ ?shape rdfs:comment ?comment }}
+  OPTIONAL {{
+    ?shape sh:property ?prop .
+    OPTIONAL {{ ?prop sh:path ?path }}
+    OPTIONAL {{ ?prop sh:datatype ?datatype }}
+    OPTIONAL {{ ?prop sh:nodeKind ?nodeKind }}
+    OPTIONAL {{ ?prop sh:class ?class }}
+    OPTIONAL {{ ?prop sh:minCount ?minCount }}
+    OPTIONAL {{ ?prop sh:maxCount ?maxCount }}
+  }}
+}}
+ORDER BY ?path
+"""
+        try:
+            async with httpx.AsyncClient() as client:
+                query_with_prefixes = DEFAULT_PREFIXES + "\n" + q
+                r = await client.get(
+                    SPARQL_ENDPOINT,
+                    params={"query": query_with_prefixes, "action": "tsv_export"},
+                    timeout=30,
+                )
+                r.raise_for_status()
+                return r.text
+        except httpx.HTTPStatusError as e:
+            raise ToolError(f"SPARQL error {e.response.status_code}: {e.response.text}")
+        except httpx.RequestError as e:
+            raise ToolError(f"Request failed: {e}")
 
     return execute
 
@@ -353,7 +410,7 @@ def nf_rag(
     if not samples:
         raise ValueError("No samples matched the filter criteria")
 
-    tool_setups = [use_tools(sparql_query(), get_schema(), count_by_type())]
+    tool_setups = [use_tools(sparql_query(), get_schema(), get_shape(), count_by_type())]
 
     return Task(
         dataset=MemoryDataset(samples),
