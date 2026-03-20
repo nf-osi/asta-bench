@@ -58,7 +58,7 @@ These prefixes are already available in every SPARQL query: nf, rdf, rdfs, owl, 
 Use them directly in queries, for example `?tool a nf:CellLine ; nf:resourceId ?rid .`
 Do not spend query budget re-declaring these common prefixes -- only declare other prefixes that you need.
 For comparison questions, include all entities that tie for the best value unless the question explicitly asks for only one.
-Prefer explicit attributes, only searching text description if remaining resources permit.
+Prefer explicit attributes first and add searching text description if this makes sense and remaining resources permit.
 Balance search depth and breadth with responsiveness to meet UX and resource requirements; submit an answer before the 45 tool use quotas are reached.
 
 Useful schema sketch of the most important/common classes and properties (use get_schema tool for full ontology):
