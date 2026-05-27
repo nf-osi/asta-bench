@@ -1,11 +1,10 @@
 # NF RAG Task
 
-Retrieval evaluation for NF (Neurofibromatosis) research resources. 
-The agent receives a natural-language question about NF research tools**, 
-such as cell lines, animal models, antibodies, genetic vectors, mutations, etc., 
-and must query a knowledge graph through an MCP server to retrieve the correct set of results.
-
-**Later, retrieval task will also add publications.
+Retrieval evaluation for NF (Neurofibromatosis) research resources and studies. 
+The agent receives a natural-language question about NF research tools
+(cell lines, animal models, antibodies, genetic vectors, mutations, etc.)
+or about studies and their associated data files,
+and must query a knowledge graph through a SPARQL endpoint to retrieve the correct set of results.
 
 ## Setup
 
@@ -24,7 +23,7 @@ export SPARQL_ENDPOINT="http://your-endpoint:port"
 
 ## Task Description
 
-Questions across 7 categories:
+Questions across 8 categories:
 | Prefix | Category |
 |--------|----------|
 | AB     | Antibodies |
@@ -34,6 +33,7 @@ Questions across 7 categories:
 | GR     | Genetic Reagents |
 | MUT    | Mutations |
 | PI     | Program / Principal Investigators |
+| ST     | Studies |
 
 
 ## Tools
@@ -46,7 +46,8 @@ The agent is given three tools that query the SPARQL endpoint directly:
 | `get_schema` | Discover classes and properties in the NF ontology |
 | `count_by_type` | Get instance counts grouped by `rdf:type` |
 
-The graph uses the namespace `nf: <http://nf-osi.github.com/terms#>`.
+The graph uses the namespaces `nf: <http://nf-osi.github.com/terms#>` and
+`biolink: <https://w3id.org/biolink/vocab/>` (for `biolink:Study`, `biolink:Dataset`, etc.).
 
 ## Answer Format
 
@@ -56,10 +57,16 @@ The agent must return a JSON array as its final output:
 ["cdde78f3-a1c3-43b4-a2d9-4f1a7cc88564", "01a755e0-90b9-44d4-ae81-3605fc5a7539"]
 ```
 
+For study questions, the expected format uses Synapse IDs:
+
+```json
+["syn2343195", "syn9727752"]
+```
+
 For single answers (e.g. counts), the value should still be in an array: `[4]`.
 
 The scorer first attempts to parse a JSON array from the output. 
-If that fails, it falls back to extracting all UUID-shaped strings via regex.
+If that fails, it falls back to extracting all UUID-shaped or Synapse ID strings via regex.
 
 ## Scoring
 
@@ -87,6 +94,10 @@ inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonn
 # Run each question 3 times to measure variance
 inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
   --epochs 3
+
+# Run only study questions
+inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \
+  -T task_category=ST
 
 # Run only cell line questions
 inspect eval astabench/nf_rag --solver basic_agent --model anthropic/claude-sonnet-4-5 \

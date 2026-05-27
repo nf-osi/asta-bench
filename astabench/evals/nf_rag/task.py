@@ -4,6 +4,7 @@ The agent receives a natural-language question about NF research resources
 and must query a SPARQL endpoint to retrieve the correct set of results.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -33,16 +34,46 @@ logger = logging.getLogger(__name__)
 
 GROUND_TRUTH_PATH = Path(__file__).resolve().parent / "eval_data.yaml"
 
+DEFAULT_PREFIXES = """\
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX nf: <http://nf-osi.github.com/terms#>
+PREFIX biolink: <https://w3id.org/biolink/vocab/>
+PREFIX efo: <http://www.ebi.ac.uk/efo/>
+PREFIX obo: <http://purl.obolibrary.org/obo/>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+"""
+
 INSTRUCTION_PREFIX = """\
-You have access to a SPARQL interface for the NF-OSI knowledge graph.
+You have access to a SPARQL interface for the NF-OSI knowledge graph of data resources and research tools.
 Use the provided tools to answer the following question.
 
 Return your final answer as a JSON array of results, e.g.:
-["uuid-1", "uuid-2", "uuid-3"] or [5] or ["name1", "name2"]
+["uuid-1", "uuid-2", "uuid-3"] or ["syn1234567", "syn7654321"] or [5] or ["name1", "name2"]
 
-Most questions ask for uuid retrieval.
-For these, each resource in the graph has nf:resourceId as a string property containing the canonical uuid.
+Most questions ask for retrieval of relevant identifiers for scientists to consider in experiment design or other research reuse.
+For research tool questions, each resource has nf:resourceId as a string property containing the canonical uuid.
 Prefer using nf:resourceId over type-specific IDs (e.g. cellLineId, animalModelId) whenever possible.
+For study questions, studies are identified by their Synapse ID (e.g. "syn2343195"), which is the local name of the study IRI.
+Extract the Synapse ID from the study IRI, e.g. <https://www.synapse.org/Synapse:syn2343195> -> "syn2343195".
+These prefixes are already available in every SPARQL query: nf, biolink, rdf, rdfs, owl, xsd, efo, obo, prov.
+Use them directly in queries, for example `?tool a nf:CellLine ; nf:resourceId ?rid .`
+or `?study a biolink:Study ; nf:manifestation "Schwannoma" .`
+Do not spend query budget re-declaring these common prefixes -- only declare other prefixes that you need.
+For comparison questions, include all entities that tie for the best value unless the question explicitly asks for only one.
+Prefer explicit attributes first and add searching text description if this makes sense and remaining resources permit.
+Balance search depth and breadth with responsiveness to meet UX and resource requirements; submit an answer before the 50-message limit is reached.
+
+Graph topology (use get_shape for detailed properties of any class):
+
+biolink:Study -> nf:File -> nf:Tool -> nf:Mutation
+                                    -> nf:Donor
+                         -> nf:Genotype
+nf:Tool <- nf:Observation -> biolink:Publication
+nf:Tool <- nf:Biobank
+nf:Tool <- nf:Development -> nf:Investigator, nf:Funder, biolink:Publication
 
 Return ONLY the JSON array as your final answer, with no other text around it.
 
@@ -60,23 +91,24 @@ def sparql_query() -> Tool:
     """Execute a SPARQL query against the NF knowledge graph.
 
     Returns results as tab-separated values (TSV).
-    The graph uses prefix nf: <http://nf-osi.github.com/terms#>.
+    Common ontology prefixes are prepended automatically.
     """
 
     async def execute(query: str) -> str:
         """Execute a SPARQL query against the NF knowledge graph.
 
         Returns results as tab-separated values (TSV).
-        The graph uses prefix nf: <http://nf-osi.github.com/terms#>.
+        Common ontology prefixes are prepended automatically.
 
         Args:
             query: The SPARQL query to execute.
         """
         try:
             async with httpx.AsyncClient() as client:
+                query_with_prefixes = DEFAULT_PREFIXES + "\n" + query
                 r = await client.get(
                     SPARQL_ENDPOINT,
-                    params={"query": query, "action": "tsv_export"},
+                    params={"query": query_with_prefixes, "action": "tsv_export"},
                     timeout=30,
                 )
                 r.raise_for_status()
@@ -92,8 +124,6 @@ def sparql_query() -> Tool:
 @tool
 def get_schema() -> Tool:
     """Return all classes and properties defined in the NF ontology.
-
-    Use this to discover the graph structure before writing queries.
     """
 
     async def execute() -> str:
@@ -134,6 +164,63 @@ SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {
 
 
 @tool
+def get_shape() -> Tool:
+    """Return the SHACL shape for one class.
+
+    Use this to inspect the expected properties for a class such as CellLine,
+    AnimalModel, Donor, File, or Observation.
+    """
+
+    async def execute(class_name: str) -> str:
+        """Return the SHACL shape for one class.
+
+        Args:
+            class_name: Local class name such as "CellLine" or "AnimalModel".
+        """
+        class_name = class_name.strip()
+        if ":" in class_name:
+            class_name = class_name.split(":", 1)[1]
+
+        q = f"""\
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+SELECT ?shape ?label ?comment ?path ?datatype ?nodeKind ?class ?minCount ?maxCount
+WHERE {{
+  ?shape a sh:NodeShape ;
+         sh:targetClass nf:{class_name} .
+  OPTIONAL {{ ?shape rdfs:label ?label }}
+  OPTIONAL {{ ?shape rdfs:comment ?comment }}
+  OPTIONAL {{
+    ?shape sh:property ?prop .
+    OPTIONAL {{ ?prop sh:path ?path }}
+    OPTIONAL {{ ?prop sh:datatype ?datatype }}
+    OPTIONAL {{ ?prop sh:nodeKind ?nodeKind }}
+    OPTIONAL {{ ?prop sh:class ?class }}
+    OPTIONAL {{ ?prop sh:minCount ?minCount }}
+    OPTIONAL {{ ?prop sh:maxCount ?maxCount }}
+  }}
+}}
+ORDER BY ?path
+"""
+        try:
+            async with httpx.AsyncClient() as client:
+                query_with_prefixes = DEFAULT_PREFIXES + "\n" + q
+                r = await client.get(
+                    SPARQL_ENDPOINT,
+                    params={"query": query_with_prefixes, "action": "tsv_export"},
+                    timeout=30,
+                )
+                r.raise_for_status()
+                return r.text
+        except httpx.HTTPStatusError as e:
+            raise ToolError(f"SPARQL error {e.response.status_code}: {e.response.text}")
+        except httpx.RequestError as e:
+            raise ToolError(f"Request failed: {e}")
+
+    return execute
+
+
+@tool
 def count_by_type() -> Tool:
     """Return instance counts grouped by rdf:type.
 
@@ -165,12 +252,17 @@ SELECT ?type (COUNT(?s) AS ?count) WHERE {
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> list[Sample]:
-    """Load eval_data.yaml and convert to inspect_ai Samples."""
+def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> tuple[list[Sample], dict]:
+    """Load eval_data.yaml and convert to inspect_ai Samples.
+
+    Returns (samples, metadata) where metadata contains dataset version info.
+    """
     import yaml
 
     with open(path) as f:
         data = yaml.safe_load(f)
+
+    dataset_metadata = data.get("metadata", {})
 
     samples = []
     for qid, entry in data["ground_truth"].items():
@@ -191,7 +283,7 @@ def load_ground_truth(path: Path = GROUND_TRUTH_PATH) -> list[Sample]:
             )
         )
 
-    return samples
+    return samples, dataset_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -202,11 +294,14 @@ UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 
+SYNAPSE_ID_RE = re.compile(r"syn\d+", re.IGNORECASE)
+
 
 def _extract_results(text: str) -> list[str]:
     """Extract result values from agent output.
 
-    Tries JSON array first, then falls back to UUID regex extraction.
+    Tries JSON array first, then falls back to regex extraction
+    of UUIDs and Synapse IDs (syn12345).
     """
     # Try parsing as JSON array
     try:
@@ -219,8 +314,10 @@ def _extract_results(text: str) -> list[str]:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Fallback: extract anything that looks like a UUID
-    return [m.lower() for m in UUID_RE.findall(text)]
+    # Fallback: extract UUIDs and Synapse IDs
+    uuids = [m.lower() for m in UUID_RE.findall(text)]
+    syn_ids = [m.lower() for m in SYNAPSE_ID_RE.findall(text)]
+    return uuids or syn_ids
 
 
 @metric
@@ -233,24 +330,65 @@ def recall() -> Metric:
     return metric_fn
 
 
-@scorer(metrics=[recall(), stderr()])
+@metric
+def f1() -> Metric:
+    """F1: harmonic mean of precision and recall over predicted UUIDs."""
+
+    def metric_fn(scores: list[SampleScore]) -> float:
+        values = []
+        for sample_score in scores:
+            metadata = sample_score.score.metadata or {}
+            value = metadata.get("f1")
+            if value is not None:
+                values.append(float(value))
+        return sum(values) / max(1, len(values))
+
+    return metric_fn
+
+
+def _is_structured_id(v: str) -> bool:
+    """Check if a value is a structured ID (UUID or Synapse ID)."""
+    return bool(UUID_RE.fullmatch(v) or SYNAPSE_ID_RE.fullmatch(v))
+
+
+@scorer(metrics=[recall(), f1(), stderr()])
 def score_nf_retrieval() -> Scorer:
-    """Score by recall over expected UUID sets."""
+    """Score by recall over expected ID sets (UUIDs or Synapse IDs)."""
 
     async def score(state: TaskState, target: Target) -> Score:
         expected = set(str(v).lower() for v in json.loads(target.text))
         predicted = set(_extract_results(state.output.completion))
+        completion_lower = state.output.completion.lower()
 
         if not expected:
-            return Score(value=1.0, answer=str(predicted), explanation="No expected results")
+            return Score(
+                value=1.0,
+                answer=str(predicted),
+                explanation="No expected results",
+                metadata={"precision": 1.0, "recall": 1.0, "f1": 1.0},
+            )
 
-        hits = expected & predicted
+        # For non-ID expected values (e.g. multiple-choice phrases),
+        # check if the phrase appears in the agent's output text.
+        is_text_answer = any(not _is_structured_id(v) for v in expected)
+        if is_text_answer:
+            hits = {v for v in expected if v in completion_lower}
+        else:
+            hits = expected & predicted
+
         r = len(hits) / len(expected)
+        p = len(hits) / len(predicted) if predicted else (1.0 if hits else 0.0)
+        f1_value = 2 * p * r / (p + r) if (p + r) else 0.0
 
         return Score(
             value=r,
-            answer=json.dumps(sorted(predicted)),
-            explanation=f"Recall {len(hits)}/{len(expected)} = {r:.2f}",
+            answer=json.dumps(sorted(predicted)) if not is_text_answer else state.output.completion.strip(),
+            explanation=(
+                f"Recall {len(hits)}/{len(expected)} = {r:.2f}; "
+                f"Precision {p:.2f}; "
+                f"F1 = {f1_value:.2f}"
+            ),
+            metadata={"precision": p, "recall": r, "f1": f1_value},
         )
 
     return score
@@ -276,20 +414,26 @@ def nf_rag(
         task_category: Comma-separated list of category prefixes to include
                        (e.g. "CL,MUT").
     """
-    samples = load_ground_truth()
+    samples, dataset_metadata = load_ground_truth()
 
     if task_filter:
-        ids = {t.strip() for t in task_filter.split(",")}
+        if isinstance(task_filter, list):
+            ids = {t.strip() for t in task_filter}
+        else:
+            ids = {t.strip() for t in task_filter.split(",")}
         samples = [s for s in samples if s.id in ids]
 
     if task_category:
-        cats = {c.strip() for c in task_category.split(",")}
+        if isinstance(task_category, list):
+            cats = {c.strip() for c in task_category}
+        else:
+            cats = {c.strip() for c in task_category.split(",")}
         samples = [s for s in samples if s.metadata["category"] in cats]
 
     if not samples:
         raise ValueError("No samples matched the filter criteria")
 
-    tool_setups = [use_tools(sparql_query(), get_schema(), count_by_type())]
+    tool_setups = [use_tools(sparql_query(), get_schema(), get_shape(), count_by_type())]
 
     return Task(
         dataset=MemoryDataset(samples),
@@ -297,4 +441,10 @@ def nf_rag(
         scorer=score_nf_retrieval(),
         setup=tool_setups,
         config=GenerateConfig(max_tool_output=128 * 1024),
+        version=dataset_metadata.get("version", 0),
+        metadata={
+            **dataset_metadata,
+            "prompt": INSTRUCTION_PREFIX,
+            "prompt_hash": hashlib.sha256(INSTRUCTION_PREFIX.encode()).hexdigest()[:12],
+        },
     )

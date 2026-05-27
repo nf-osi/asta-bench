@@ -10,6 +10,7 @@ Scored on two separate metrics:
 - citation_f1: F1 over (pmid, passage_num) attribution tuples
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -220,8 +221,10 @@ ORDER BY DESC(?count)"""
 def load_ground_truth(
     path: Path = GROUND_TRUTH_PATH,
     question_style: str = "precise",
-) -> list[Sample]:
+) -> tuple[list[Sample], dict]:
     """Load eval_data.yaml and convert to inspect_ai Samples.
+
+    Returns (samples, metadata) where metadata contains dataset version info.
 
     Args:
         path: Path to eval_data.yaml.
@@ -234,6 +237,7 @@ def load_ground_truth(
     with open(path) as f:
         data = yaml.safe_load(f)
 
+    dataset_metadata = data.get("metadata", {})
     field = "user_query" if question_style == "user_query" else "question"
 
     samples = []
@@ -273,7 +277,7 @@ def load_ground_truth(
             )
         )
 
-    return samples
+    return samples, dataset_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +464,7 @@ def nf_rag_pubs(
         question_style: "precise" (default) uses carefully worded questions;
                         "user_query" uses colloquial, realistic phrasings.
     """
-    samples = load_ground_truth(question_style=question_style)
+    samples, dataset_metadata = load_ground_truth(question_style=question_style)
 
     if task_filter:
         ids = {t.strip() for t in task_filter.split(",")}
@@ -481,4 +485,10 @@ def nf_rag_pubs(
         scorer=[score_answer(), score_attribution()],
         setup=tool_setups,
         config=GenerateConfig(max_tool_output=128 * 1024),
+        version=dataset_metadata.get("version", 0),
+        metadata={
+            **dataset_metadata,
+            "prompt": INSTRUCTION_PREFIX,
+            "prompt_hash": hashlib.sha256(INSTRUCTION_PREFIX.encode()).hexdigest()[:12],
+        },
     )
