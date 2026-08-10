@@ -14,7 +14,10 @@ scipy==1.12.0
 statsmodels==0.14.1
 xgboost==2.0.3
 PyYAML==6.0.2
-torch==2.2.0 
+torch==2.6.0
 tensorflow-cpu==2.16.1 ; platform_machine == 'x86_64'
 tensorflow==2.16.1 ; platform_machine != 'x86_64'
+keras>=3.13.2
+pillow>=10.2.0
+setuptools>=78.1.1
 
