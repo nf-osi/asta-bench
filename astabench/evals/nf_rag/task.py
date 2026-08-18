@@ -74,6 +74,12 @@ biolink:Study -> nf:File -> nf:Tool -> nf:Mutation
 nf:Tool <- nf:Observation -> biolink:Publication
 nf:Tool <- nf:Biobank
 nf:Tool <- nf:Development -> nf:Investigator, nf:Funder, biolink:Publication
+biolink:Publication -> nf:authors -> author name literals (the COMPLETE author list)
+biolink:Publication -> nf:doi -> DOI IRI -> nf:authorOrcid -> ORCID IRI (only authors who have an ORCID)
+ORCID IRI -> rdf:type -> nf:SynapseUser (typed when that person also has a Synapse profile)
+ORCID IRI <-> Synapse Profile IRI, linked by owl:sameAs in both directions
+nf:Investigator -> owl:sameAs -> ORCID IRI
+nf:Investigator -> owl:sameAs -> Synapse Profile IRI
 
 Return ONLY the JSON array as your final answer, with no other text around it.
 
