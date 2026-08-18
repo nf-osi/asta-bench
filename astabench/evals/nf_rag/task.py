@@ -76,8 +76,7 @@ nf:Tool <- nf:Biobank
 nf:Tool <- nf:Development -> nf:Investigator, nf:Funder, biolink:Publication
 biolink:Publication -> nf:authors -> author name literals (the COMPLETE author list)
 biolink:Publication -> nf:doi -> DOI IRI -> nf:authorOrcid -> ORCID IRI (only authors who have an ORCID)
-ORCID IRI -> rdf:type -> nf:SynapseUser (typed when that person also has a Synapse profile)
-ORCID IRI <-> Synapse Profile IRI, linked by owl:sameAs in both directions
+ORCID IRI -> nf:hasSynapseProfile -> Synapse Profile IRI (single hop; present only when that person has both an ORCID and a Synapse account)
 nf:Investigator -> owl:sameAs -> ORCID IRI
 nf:Investigator -> owl:sameAs -> Synapse Profile IRI
 
